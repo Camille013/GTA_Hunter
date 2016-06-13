@@ -1,11 +1,19 @@
 """
 File name: SVM.py
 Date created: 12/04/2015
-Date last modified: 05/20/2016
+Date last modified: 06/03/2016
 Python version: 3.5.1
 Description: Support Vector Machine
 	class that can train, test, and
 	cross validate on an array of Profiles.
+
+Edits made by Camille Hankel:
+	Cross valiadtion function was changed
+	to include shuffling and folding by cluster,
+	so that profiles of the same cluster were not
+	in different sets (training/testing). Re-weighting
+	was removed in this function as the weights now 
+	are unchanged.
 """
 
 ###############
@@ -289,20 +297,47 @@ class SVM:
 		gta_as_phage = []
 		phage_as_gta = []
 
+		if pairwiseGTA:
+			# weight and get clusters 
+			# GTA
+			GTA_weight = Weight([x for x in self.profiles if x.label == self.label0], pairwiseGTA)
+			GTA_clusters = GTA_weight.cluster(cluster_type, d)
+			GTA_weight.weight(GTA_clusters)
+			# Virus
+			virus_weight = Weight([x for x in self.profiles if x.label != self.label0], pairwiseViral)
+			virus_clusters = virus_weight.cluster(cluster_type, d)
+			virus_weight.weight(virus_clusters)
+			# Grab updated weights
+			weights = np.array([x.weight for x in self.profiles])
+		else:
+			weights = np.array([1 for x in self.profiles])
+			clusters = [self.profiles]
 		# repeat xval results nrep times
 		for i in range(nrep):
 			if not mini:
 				sys.stdout.flush()
 				sys.stdout.write("Starting rep: %d\r" % (i+1))
 			# randomly sort profiles
-			random.shuffle(self.profiles)
+			clusters = list(GTA_clusters.union(virus_clusters))
+			random.shuffle(clusters)
 			# split into folds
-			split = [self.profiles[i::nfold] for i in range(nfold)]
+			split = [clusters[i::nfold] for i in range(nfold)]
 			# cross val
 			for j in range(nfold):
 				# Build train and test sets
-				train_fold = np.array([x for sublist in (split[:j]+split[j+1:]) for x in sublist])
-				test_fold = split[j]
+				train_fold = []
+				test_fold = []
+				train_clust_fold= np.array([x for sublist in (split[:j]+split[j+1:]) for x in sublist])
+				test_clust_fold = split[j]
+				for cluster in train_clust_fold:
+					for x in cluster:
+						#print x.weight
+						train_fold.append(x)
+				for cluster in test_clust_fold:
+					for x in cluster:
+						#print x.weight, "test fold"
+						test_fold.append(x)
+
 				trainX = np.array([x.features for x in train_fold])
 				testX = np.array([x.features for x in test_fold])
 				trainY = np.array([-1.0 if y.label == self.label0 else 1.0 for y in train_fold])
@@ -311,20 +346,7 @@ class SVM:
 				# randomize labels
 				# random.shuffle(trainY)
 				# Get training set weights
-				if pairwiseGTA:
-					# Reweight based on training set
-					# GTA
-					GTA_weight = Weight([x for x in train_fold if x.label == self.label0], pairwiseGTA)
-					GTA_clusters = GTA_weight.cluster(cluster_type, d)
-					GTA_weight.weight(GTA_clusters)
-					# Virus
-					virus_weight = Weight([x for x in train_fold if x.label != self.label0], pairwiseViral)
-					virus_clusters = virus_weight.cluster(cluster_type, d)
-					virus_weight.weight(virus_clusters)
-					# Grab updated weights
-					weights = np.array([x.weight for x in train_fold])
-				else:
-					weights = np.array([1 for x in train_fold])
+				weights = np.array([x.weight for x in train_fold])
 				# evaluate results
 				predictor = SVMTrain(self.kernel, self.c).train(trainX, trainY, weights)
 				for r in range(len(testX)):
